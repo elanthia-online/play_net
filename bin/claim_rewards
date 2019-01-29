@@ -1,0 +1,70 @@
+#!/usr/bin/env ruby
+require "mechanize"
+require_relative("../util/opts.rb")
+require_relative("../util/color.rb")
+
+module Rewards
+
+  def self.to_nokogiri(page)
+    Nokogiri::HTML(page.content.toutf8)
+  end
+
+  def self.claim(account:, password:)
+    @mechanize = Mechanize.new
+    # sign in and redirect to the store front
+    @mechanize.get("https://store.play.net/Account/SignIn?returnURL=%2Fstore%2Fpurchase%2Fgs") do |page|
+
+      auth_result = page.form_with(method: 'POST') do |form|
+        form["UserName"] = account
+        form['Password'] = password
+      end.submit
+
+      auth_result_html = to_nokogiri(auth_result)
+
+      unless auth_result.css("#login").text.strip.split("\n").first.downcase.start_with?(account.downcase)
+        return puts("✗ :error >> Account(#{account}): #{Color.red("login did not succeed")}")
+      end
+
+      reward_state = auth_result_html.css(".RewardMessage").text.downcase
+
+      return puts(Color.pink("✓ :skipped >> Account(#{account}): #{reward_state}")) if reward_state.start_with?("next subscription bonus")
+      
+      reward_form = auth_result.form_with(action: "/Store/ClaimReward")
+
+      return puts(Color.red("✗ :error >> Account(#{account}): no reward form found, maybe bad auth")) if reward_form.nil?
+
+      reward_form_result = reward_form.submit 
+
+      reward_form_result_html = to_nokogiri(reward_form_result)
+
+      redeemed_msg = reward_form_result_html.css(".RewardMessage").text.downcase
+
+      return puts(Color.green("✓ :claimed >> Account(#{account}): #{redeemed_msg}")) if redeemed_msg.start_with?("claimed")      
+    end
+  end
+
+
+  def self.main()
+    Rewards.claim(
+      account:  Opts.account, 
+      password: Opts.password)
+  end
+
+  def self.preflight()
+    Opts.account  or fail Exception, "--account is required"
+    Opts.password or fail Exception, "--password is required"
+  end
+
+  if STDIN.tty?
+    Rewards.preflight()
+    Rewards.main()
+  else
+    STDIN.read.split("\n").each do |line|
+      (account, password) = line.split(%r[\s{1,}]).take(2)
+      fail Exception, "account or password were empty in an entry" if account.empty? or password.empty?
+      Rewards.claim(account: account, password: password)
+      sleep(3)
+    end
+  end
+end
+
