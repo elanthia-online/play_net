@@ -12,6 +12,10 @@ module Color
     colorize(str, 32)
   end
 
+  def self.underline(str)
+    colorize(str, "4munderline")
+  end
+
   def self.yellow(str)
     colorize(str, 33)
   end

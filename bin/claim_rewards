@@ -4,9 +4,31 @@ require_relative("../util/opts.rb")
 require_relative("../util/color.rb")
 
 module Rewards
+  OUTCOMES = {
+    err:     {color: :red,   message: "✗ :error"},
+    claimed: {color: :green, message: "✓ :claimed"},
+    skip:    {color: :pink,  message: "✓ :skipped"},
+  }
 
   def self.to_nokogiri(page)
     Nokogiri::HTML(page.content.toutf8)
+  end
+
+  def self.header()
+    puts([ "outcome".rjust(10),
+          "account".rjust(20),
+          "balance".rjust(10),
+          "\t" + "message"].join(" "))
+  end
+
+  def self.view(outcome:, account:, balance: "", message:)
+    outcome = OUTCOMES.fetch(outcome)
+    $stdout.puts(
+      Color.send(outcome[:color], 
+        [ outcome[:message].rjust(10),
+          account.to_s.rjust(20),
+          balance.to_s.rjust(10),
+          "\t" + message.to_s].join(" ")))
   end
 
   def self.claim(account:, password:)
@@ -22,29 +44,53 @@ module Rewards
       end.submit
 
       auth_result_html = to_nokogiri(auth_result)
+      auth_ok = auth_result.css("#login")
+                  .text.strip.split("\n")
+                  .first.downcase.start_with?(account.downcase)
 
-      unless auth_result.css("#login").text.strip.split("\n").first.downcase.start_with?(account.downcase)
-        return puts("✗ :error >> Account(#{account}): #{Color.red("login did not succeed")}")
+      puts
+
+      unless auth_ok
+        return view(
+          outcome: :err,
+          account: account,
+          message: "login did not succeed")
       end
 
       reward_state  = auth_result_html.css(".RewardMessage").text.downcase
       reward_amount = auth_result_html.css(".balance > span").text
 
-      return puts(Color.pink("✓ :skipped >> Account(#{account}): #{reward_state} : Balance(#{reward_amount})")) if reward_state.start_with?("next subscription bonus")
+      if reward_state.start_with?("next subscription bonus")
+        return view(
+          outcome: :skip,
+          account: account,
+          balance: reward_amount,
+          message: reward_state)
+      end
       
       reward_form = auth_result.form_with(action: "/Store/ClaimReward")
-
-      return puts(Color.red("✗ :error >> Account(#{account}): no reward form found, maybe bad auth")) if reward_form.nil?
+      
+      if reward_form.nil?
+        return view(
+          outcome: :err,
+          account: account,
+          message: "no reward form found, maybe bad auth")
+      end
+        
 
       reward_form_result      = reward_form.submit 
       reward_form_result_html = to_nokogiri(reward_form_result)
       reward_amount           = reward_form_result_html.css(".balance > span").text
       redeemed_msg            = reward_form_result_html.css(".RewardMessage").text.downcase
-
-      return puts(Color.green("✓ :claimed >> Account(#{account}): #{redeemed_msg} : Balance(#{reward_amount})")) if redeemed_msg.start_with?("claimed")      
+      if redeemed_msg.start_with?("claimed")
+        return view(
+          outcome: :claimed,
+          account: account,
+          balance: reward_amount,
+          message: redeemed_msg)
+      end
     end
   end
-
 
   def self.main()
     Rewards.claim(
@@ -61,12 +107,13 @@ module Rewards
     Rewards.preflight()
     Rewards.main()
   else
+    Rewards.header()
     STDIN.read.split("\n").each do |line|
       (account, password) = line.split(%r[\s{1,}]).take(2)
       fail Exception, "account or password were empty in an entry" if account.empty? or password.empty?
       Rewards.claim(account: account, password: password)
       # randomize it for less patterned traffic
-      sleep(Opts.to_h.fetch(:delay, 5) * rand)
+      sleep(Opts.to_h.fetch(:delay, 1) * rand)
     end
   end
 end
