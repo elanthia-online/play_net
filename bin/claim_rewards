@@ -48,8 +48,6 @@ module Rewards
                   .text.strip.split("\n")
                   .first.downcase.start_with?(account.downcase)
 
-      puts
-
       unless auth_ok
         return view(
           outcome: :err,
